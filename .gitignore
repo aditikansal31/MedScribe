@@ -1,5 +1,3 @@
-cd ~/medstt
-cat > .gitignore << 'EOF'
 # ==== Secrets & environment ====
 .env
 .env.*
@@ -56,4 +54,3 @@ infra/redis/data/
 
 # ==== Alembic (keep migration scripts, ignore local db state) ====
 *.sqlite3
-EOF
