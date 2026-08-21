@@ -12,6 +12,9 @@ from app.core.lifespan import lifespan
 from app.core.logging_config import configure_logging, get_logger
 from app.middleware.request_logging import RequestLoggingMiddleware
 
+from app.api.health import router as health_router
+from app.api.auth import router as auth_router
+
 configure_logging()
 logger = get_logger(__name__)
 settings = get_settings()
@@ -38,8 +41,9 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
-
+app.include_router(auth_router)
 
 @app.get("/")
 async def root() -> dict:
     return {"message": f"{settings.PROJECT_NAME} API", "docs": "/docs"}
+
