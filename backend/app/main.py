@@ -20,6 +20,9 @@ from app.api.patients import router as patients_router
 from app.api.hitl import router as hitl_router
 from app.api.audit_logs import router as audit_logs_router
 
+from app.api import appointments
+from app.api import audio
+
 configure_logging()
 logger = get_logger(__name__)
 settings = get_settings()
@@ -52,6 +55,9 @@ app.include_router(admin_users_router)
 app.include_router(patients_router)
 app.include_router(hitl_router)
 app.include_router(audit_logs_router)
+
+app.include_router(appointments.router)
+app.include_router(audio.router)
 
 @app.get("/")
 async def root() -> dict:

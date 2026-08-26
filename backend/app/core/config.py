@@ -6,6 +6,7 @@ boot immediately with a clear error, rather than failing later mid-request
 in a way that's hard to trace. This is a deliberate production-safety choice.
 """
 from functools import lru_cache
+from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,6 +32,27 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_HOST: str = "redis"
     REDIS_PASSWORD: str
+    
+        # ==== Audio storage & ingestion (Phase 7) ====
+    AUDIO_STORAGE_ROOT: str = "../storage/audio"  # relative to backend/ working dir
+    MAX_UPLOAD_SIZE_BYTES: int = 100 * 1024 * 1024  # 100MB
+    ALLOWED_AUDIO_MIME_TYPES: str = (
+        "audio/wav,audio/x-wav,audio/mpeg,audio/mp4,audio/m4a,"
+        "audio/webm,audio/ogg,audio/flac"
+    )
+
+    @computed_field
+    @property
+    def allowed_audio_mime_types_list(self) -> list[str]:
+        return [t.strip() for t in self.ALLOWED_AUDIO_MIME_TYPES.split(",")]
+
+    @property
+    def audio_originals_path(self) -> str:
+        return f"{self.AUDIO_STORAGE_ROOT}/originals"
+
+    @property
+    def audio_normalized_path(self) -> str:
+        return f"{self.AUDIO_STORAGE_ROOT}/normalized"
 
     @property
     def DATABASE_URL_ASYNC(self) -> str:
