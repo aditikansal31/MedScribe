@@ -33,13 +33,16 @@ class Settings(BaseSettings):
     REDIS_HOST: str = "redis"
     REDIS_PASSWORD: str
     
-        # ==== Audio storage & ingestion (Phase 7) ====
+    # ==== Audio storage & ingestion  ====
     AUDIO_STORAGE_ROOT: str = "../storage/audio"  # relative to backend/ working dir
     MAX_UPLOAD_SIZE_BYTES: int = 100 * 1024 * 1024  # 100MB
     ALLOWED_AUDIO_MIME_TYPES: str = (
         "audio/wav,audio/x-wav,audio/mpeg,audio/mp4,audio/m4a,"
         "audio/webm,audio/ogg,audio/flac"
     )
+    
+    # ==== Hugging Face ====
+    HUGGINGFACE_TOKEN: str
 
     @computed_field
     @property

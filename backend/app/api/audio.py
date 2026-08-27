@@ -21,7 +21,11 @@ from app.db.session import get_db
 from app.models.appointment import Appointment
 from app.models.audio import AudioRecording
 from app.models.enums import AudioProcessingStatus, AuditAction, InputSource
+from app.models.audio import AudioChunk
 from app.schemas.audio import AudioRecordingSummary
+from app.schemas.audio_chunk import AudioChunkSummary
+from app.services.chunking_orchestrator import run_chunking_pipeline
+
 from app.schemas.auth import CurrentUser
 from app.services.audio_service import (
     AudioValidationError,
@@ -293,3 +297,42 @@ async def list_audio_recordings(
     )
     recordings = result.scalars().all()
     return [AudioRecordingSummary.model_validate(r) for r in recordings]
+
+@router.post("/{recording_id}/chunk", response_model=list[AudioChunkSummary], status_code=status.HTTP_201_CREATED)
+async def chunk_audio_recording(
+    recording_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+) -> list[AudioChunkSummary]:
+    """
+    Runs the full Phase 8 pipeline (VAD -> diarization -> merge ->
+    extract -> persist) for an already-normalized recording. This is a
+    SEPARATE, explicitly-triggered step from upload -- not run
+    automatically at the end of /audio/upload -- because diarization is
+    the heaviest operation in the pipeline so far (multiple minutes even
+    on a short recording, per what we measured), and forcing every
+    upload request to block on it would make the upload endpoint itself
+    unacceptably slow. Chunking is triggered as its own call once a
+    recording is confirmed uploaded/normalized successfully.
+    """
+    try:
+        chunks = await run_chunking_pipeline(recording_id, db)
+    except AudioValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    return [AudioChunkSummary.model_validate(c) for c in chunks]
+
+
+@router.get("/{recording_id}/chunks", response_model=list[AudioChunkSummary])
+async def list_audio_chunks(
+    recording_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+) -> list[AudioChunkSummary]:
+    result = await db.execute(
+        select(AudioChunk)
+        .where(AudioChunk.audio_recording_id == recording_id)
+        .order_by(AudioChunk.chunk_index)
+    )
+    chunks = result.scalars().all()
+    return [AudioChunkSummary.model_validate(c) for c in chunks]
