@@ -26,6 +26,10 @@ from app.schemas.audio import AudioRecordingSummary
 from app.schemas.audio_chunk import AudioChunkSummary
 from app.services.chunking_orchestrator import run_chunking_pipeline
 
+from app.models.transcript import Transcript
+from app.schemas.transcript import TranscriptSummary
+from app.services.transcription_orchestrator import run_transcription_pipeline
+
 from app.schemas.auth import CurrentUser
 from app.services.audio_service import (
     AudioValidationError,
@@ -336,3 +340,40 @@ async def list_audio_chunks(
     )
     chunks = result.scalars().all()
     return [AudioChunkSummary.model_validate(c) for c in chunks]
+
+@router.post("/{recording_id}/transcribe", response_model=list[TranscriptSummary], status_code=status.HTTP_201_CREATED)
+async def transcribe_audio_recording(
+    recording_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+) -> list[TranscriptSummary]:
+    """
+    Runs MedASR over every chunk of a chunking_complete recording.
+    Explicitly separate from chunking (its own POST call), same reasoning
+    as chunking being separate from upload: this is a real, non-trivial
+    amount of GPU inference time (one model load + N chunk transcriptions),
+    and there's no background task queue yet to hide that latency from
+    the caller.
+    """
+    try:
+        transcripts = await run_transcription_pipeline(recording_id, db)
+    except AudioValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    return [TranscriptSummary.model_validate(t) for t in transcripts]
+
+
+@router.get("/{recording_id}/transcripts", response_model=list[TranscriptSummary])
+async def list_transcripts_for_recording(
+    recording_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+) -> list[TranscriptSummary]:
+    result = await db.execute(
+        select(Transcript)
+        .join(AudioChunk, Transcript.audio_chunk_id == AudioChunk.id)
+        .where(AudioChunk.audio_recording_id == recording_id)
+        .order_by(AudioChunk.chunk_index)
+    )
+    transcripts = result.scalars().all()
+    return [TranscriptSummary.model_validate(t) for t in transcripts]
