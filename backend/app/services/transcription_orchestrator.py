@@ -6,6 +6,7 @@ produces the raw draft transcripts for the quality engine to later
 evaluate.
 """
 import uuid
+import asyncio
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as DBSession
@@ -16,8 +17,12 @@ from app.models.enums import AudioProcessingStatus, HitlStatus, TranscriptSource
 from app.models.hitl import HitlItem
 from app.models.transcript import Transcript
 from app.services.audio_service import AudioValidationError, resolve_absolute_path
+from app.services.azure_asr_service import is_azure_configured, transcribe_chunk_azure
+from app.services.consensus_service import ConsensusOutcome, compare_transcriptions
+
 from app.services.medasr_service import MODEL_ID, transcribe_chunk
 from app.services.quality_engine import assess_transcript_quality
+
 
 logger = get_logger(__name__)
 
@@ -66,9 +71,23 @@ async def run_transcription_pipeline(recording_id: uuid.UUID, db: DBSession) -> 
         created_transcripts: list[Transcript] = []
         hitl_items_created = 0
 
+        azure_available = is_azure_configured()
         for chunk in chunks:
             chunk_absolute_path = resolve_absolute_path(chunk.storage_path)
-            asr_result = await transcribe_chunk(chunk_absolute_path)
+
+            # Per explicit design: Azure runs on EVERY chunk, concurrently
+            # with MedASR, regardless of MedASR's eventual quality --
+            # not a fallback-only trigger. If Azure isn't configured at
+            # all, we skip attempting the call entirely (zero cost),
+            # rather than letting it fail per-chunk.
+            if azure_available:
+                asr_result, azure_result = await asyncio.gather(
+                    transcribe_chunk(chunk_absolute_path),
+                    transcribe_chunk_azure(chunk_absolute_path),
+                )
+            else:
+                asr_result = await transcribe_chunk(chunk_absolute_path)
+                azure_result = None
 
             chunk_duration = chunk.end_time_seconds - chunk.start_time_seconds
             quality_report = assess_transcript_quality(
@@ -78,45 +97,66 @@ async def run_transcription_pipeline(recording_id: uuid.UUID, db: DBSession) -> 
                 chunk_duration_seconds=chunk_duration,
             )
 
-            transcript_status = TranscriptStatus.DRAFT if quality_report.accept else TranscriptStatus.FLAGGED_FOR_REVIEW
+            consensus = compare_transcriptions(
+                medasr_text=asr_result.text,
+                medasr_confidence=asr_result.confidence_score,
+                azure_text=azure_result.text if azure_result else "",
+                azure_confidence=azure_result.confidence if azure_result else None,
+                azure_succeeded=azure_result.success if azure_result else False,
+            )
+
+            # Consensus mismatch overrides the Phase 10 quality-only
+            # acceptance decision -- even if MedASR's OWN confidence
+            # looked fine, disagreeing with an independent cloud
+            # transcription is itself a reason for review that Phase 10
+            # alone couldn't have known about.
+            needs_review = (not quality_report.accept) or (
+                consensus.outcome == ConsensusOutcome.MISMATCH_NEEDS_REVIEW
+            )
+            transcript_status = TranscriptStatus.FLAGGED_FOR_REVIEW if needs_review else TranscriptStatus.DRAFT
+
+            combined_report = quality_report.to_dict()
+            combined_report["consensus"] = {
+                "outcome": consensus.outcome.value,
+                "similarity_ratio": consensus.similarity_ratio,
+                "medasr_confidence": consensus.medasr_confidence,
+                "azure_confidence": consensus.azure_confidence,
+                "azure_text": azure_result.text if azure_result else None,
+                "azure_available": azure_available,
+            }
 
             transcript = Transcript(
                 appointment_id=recording.appointment_id,
                 audio_chunk_id=chunk.id,
-                source=TranscriptSource.LOCAL_ASR,
+                source=consensus.chosen_source,
                 status=transcript_status,
-                text=asr_result.text,
-                model_name=MODEL_ID,
-                model_version=MODEL_VERSION,
+                text=consensus.chosen_text,
+                model_name=MODEL_ID if consensus.chosen_source == TranscriptSource.LOCAL_ASR else "azure-speech",
+                model_version=MODEL_VERSION if consensus.chosen_source == TranscriptSource.LOCAL_ASR else None,
                 confidence_score=asr_result.confidence_score,
-                quality_report=quality_report.to_dict(),
+                quality_report=combined_report,
             )
             db.add(transcript)
-            await db.flush()  # need transcript.id for the HITL FK below
+            await db.flush()
             created_transcripts.append(transcript)
 
             logger.info(
                 "chunk_transcribed",
                 recording_id=str(recording_id),
                 chunk_index=chunk.chunk_index,
-                text_length=len(asr_result.text),
+                text_length=len(consensus.chosen_text),
                 accept=quality_report.accept,
+                consensus_outcome=consensus.outcome.value,
             )
 
             if not quality_report.accept:
-                # One reason per HITL item, per the schema's design --
-                # if multiple flags fired, we create one HITL entry per
-                # flag rather than trying to encode multiple reasons on
-                # a single row. This keeps each queue item's reason field
-                # meaningful and matches the admin UI's existing
-                # single-reason-per-card display (built in Phase 6).
                 for flag_reason in quality_report.flags:
                     hitl_item = HitlItem(
                         appointment_id=recording.appointment_id,
                         transcript_id=transcript.id,
                         reason=flag_reason,
                         status=HitlStatus.PENDING,
-                        detail=quality_report.to_dict(),
+                        detail=combined_report,
                         user_facing_message=(
                             f"Chunk {chunk.chunk_index} transcript flagged for review "
                             f"({flag_reason.value.replace('_', ' ')}). "
@@ -125,6 +165,22 @@ async def run_transcription_pipeline(recording_id: uuid.UUID, db: DBSession) -> 
                     )
                     db.add(hitl_item)
                     hitl_items_created += 1
+
+            if consensus.outcome == ConsensusOutcome.MISMATCH_NEEDS_REVIEW:
+                hitl_item = HitlItem(
+                    appointment_id=recording.appointment_id,
+                    transcript_id=transcript.id,
+                    reason=HitlReason.CONSENSUS_MISMATCH,
+                    status=HitlStatus.PENDING,
+                    detail=combined_report,
+                    user_facing_message=(
+                        f"Chunk {chunk.chunk_index}: MedASR and Azure transcriptions "
+                        f"disagree and neither is clearly more reliable. "
+                        f"Speaker: {chunk.speaker_label or 'unknown'}."
+                    ),
+                )
+                db.add(hitl_item)
+                hitl_items_created += 1
 
         recording.processing_status = AudioProcessingStatus.TRANSCRIPTION_COMPLETE
         await db.commit()

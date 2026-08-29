@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     
     # ==== Hugging Face ====
     HUGGINGFACE_TOKEN: str
+    
+    # ==== Azure AI Speech (Phase 11: cloud ASR, always-run-both design) ====
+    # Optional, not required -- unlike HUGGINGFACE_TOKEN (Phase 8), the
+    # system must be able to run with Azure entirely unconfigured, since
+    # it's a paid external service the user may want to disable for cost
+    # control. is_azure_configured() in azure_asr_service.py is the
+    # single source of truth calling code should check.
+    AZURE_SPEECH_KEY: str = ""
+    AZURE_SPEECH_REGION: str = ""
 
     @computed_field
     @property

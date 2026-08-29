@@ -30,6 +30,10 @@ from app.models.transcript import Transcript
 from app.schemas.transcript import TranscriptSummary
 from app.services.transcription_orchestrator import run_transcription_pipeline
 
+from app.models.extracted_entity import ExtractedEntitySet
+from app.schemas.extracted_entity import ExtractedEntitySetSummary
+from app.services.ner_orchestrator import run_ner_pipeline
+
 from app.schemas.auth import CurrentUser
 from app.services.audio_service import (
     AudioValidationError,
@@ -377,3 +381,31 @@ async def list_transcripts_for_recording(
     )
     transcripts = result.scalars().all()
     return [TranscriptSummary.model_validate(t) for t in transcripts]
+
+@router.post("/{recording_id}/extract-entities", response_model=list[ExtractedEntitySetSummary], status_code=status.HTTP_201_CREATED)
+async def extract_entities_for_recording(
+    recording_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+) -> list[ExtractedEntitySetSummary]:
+    try:
+        entity_sets = await run_ner_pipeline(recording_id, db)
+    except AudioValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    return [ExtractedEntitySetSummary.model_validate(e) for e in entity_sets]
+
+
+@router.get("/{recording_id}/entities", response_model=list[ExtractedEntitySetSummary])
+async def list_entities_for_recording(
+    recording_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+) -> list[ExtractedEntitySetSummary]:
+    result = await db.execute(
+        select(ExtractedEntitySet)
+        .join(Transcript, ExtractedEntitySet.transcript_id == Transcript.id)
+        .where(Transcript.appointment_id == select(AudioRecording.appointment_id).where(AudioRecording.id == recording_id).scalar_subquery())
+    )
+    entity_sets = result.scalars().all()
+    return [ExtractedEntitySetSummary.model_validate(e) for e in entity_sets]
