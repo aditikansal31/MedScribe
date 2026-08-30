@@ -18,6 +18,10 @@ from app.services.chunking_service import build_chunks
 from app.services.diarization_service import diarize_audio
 from app.services.vad_service import detect_speech_regions
 
+from app.core.metrics_helpers import track_pipeline_stage
+from app.core.tracing import bind_appointment_trace
+
+
 logger = get_logger(__name__)
 
 
@@ -26,6 +30,7 @@ async def run_chunking_pipeline(recording_id: uuid.UUID, db: DBSession) -> list[
     recording = result.scalar_one_or_none()
     if recording is None:
         raise AudioValidationError("Audio recording not found")
+    bind_appointment_trace(recording.appointment_id)
 
     if recording.processing_status == AudioProcessingStatus.VALIDATION_FAILED:
         raise AudioValidationError(
@@ -46,21 +51,46 @@ async def run_chunking_pipeline(recording_id: uuid.UUID, db: DBSession) -> list[
         )
 
     # Existing chunks for this recording are cleared before regenerating.
-    # Re-chunking should be idempotent -- if this pipeline is re-run
-    # (e.g. after a bug fix, exactly like the one we just fixed), it
-    # replaces stale chunks rather than appending duplicates alongside them.
+    # CRITICAL FIX (found via real duplicate-data investigation): deleting
+    # an AudioChunk sets any Transcript.audio_chunk_id pointing at it to
+    # NULL (ondelete="SET NULL", by design -- see transcript.py), NOT a
+    # cascade delete. This means re-chunking previously left ORPHANED
+    # Transcript rows behind with a NULL chunk reference -- invisible to
+    # Phase 9's own idempotency check (which only looks for transcripts
+    # tied to the CURRENT chunk IDs), so they silently accumulated across
+    # every re-chunk-then-retranscribe cycle. Confirmed via real data:
+    # 34 duplicated transcript texts, each with one orphaned (NULL
+    # audio_chunk_id) and one live copy, discovered because a real
+    # MedGemma prompt was 2x bloated with duplicate content.
+    # FIX: explicitly delete any transcripts already orphaned by a
+    # PRIOR re-chunk (audio_chunk_id IS NULL for this appointment) before
+    # deleting the chunks themselves, so this doesn't keep compounding.
+    from app.models.transcript import Transcript
+
+    orphaned_transcripts = await db.execute(
+        select(Transcript).where(
+            Transcript.appointment_id == select(AudioRecording.appointment_id)
+            .where(AudioRecording.id == recording_id)
+            .scalar_subquery(),
+            Transcript.audio_chunk_id.is_(None),
+        )
+    )
+    for orphan in orphaned_transcripts.scalars().all():
+        await db.delete(orphan)
+
     existing = await db.execute(select(AudioChunk).where(AudioChunk.audio_recording_id == recording_id))
     for stale_chunk in existing.scalars().all():
         await db.delete(stale_chunk)
     await db.flush()
-
+    
     recording.processing_status = AudioProcessingStatus.CHUNKING
     await db.commit()
-
+    
     try:
-        speech_regions = await detect_speech_regions(normalized_absolute_path)
-        diarized_segments = await diarize_audio(normalized_absolute_path)
-        boundaries = build_chunks(speech_regions, diarized_segments)
+        with track_pipeline_stage("chunk"):
+            speech_regions = await detect_speech_regions(normalized_absolute_path)
+            diarized_segments = await diarize_audio(normalized_absolute_path)
+            boundaries = build_chunks(speech_regions, diarized_segments)
 
         if not boundaries:
             raise AudioValidationError(

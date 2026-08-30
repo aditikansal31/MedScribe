@@ -21,6 +21,9 @@ from app.models.transcript import Transcript
 from app.services.audio_service import AudioValidationError
 from app.services.ner_validation import build_validated_entities
 from app.services.ner_service import extract_entities
+from app.core.tracing import bind_appointment_trace
+from app.core.metrics_helpers import track_pipeline_stage
+from app.core.metrics import NER_ENTITY_VALIDATION_OUTCOME
 
 logger = get_logger(__name__)
 
@@ -32,6 +35,7 @@ async def run_ner_pipeline(recording_id: uuid.UUID, db: DBSession) -> list[Extra
     recording = result.scalar_one_or_none()
     if recording is None:
         raise AudioValidationError("Audio recording not found")
+    bind_appointment_trace(recording.appointment_id)
 
     transcripts_result = await db.execute(
         select(Transcript).where(Transcript.appointment_id == recording.appointment_id)
@@ -55,37 +59,40 @@ async def run_ner_pipeline(recording_id: uuid.UUID, db: DBSession) -> list[Extra
     created_entity_sets: list[ExtractedEntitySet] = []
 
     for transcript in transcripts:
-        ner_result = await extract_entities(transcript.text)
-        validated = build_validated_entities(ner_result)
+        with track_pipeline_stage("ner"):
+            ner_result = await extract_entities(transcript.text)
+            validated = build_validated_entities(ner_result)
+            for entity in validated.entities:
+                NER_ENTITY_VALIDATION_OUTCOME.labels(status=entity.status, label=entity.label).inc()
 
-        entity_set = ExtractedEntitySet(
-            appointment_id=transcript.appointment_id,
-            transcript_id=transcript.id,
-            target_role=UserRole.NURSE,
-            raw_entities=ner_result.to_dict(),  # COMPLETE, UNFILTERED output -- every
-                                                  # entity both models found, regardless
-                                                  # of confidence, never modified after
-                                                  # creation. This is the permanent,
-                                                  # auditable record of what the models
-                                                  # actually produced.
-            validated_entities=validated.to_dict(),
-            ner_model_name="OpenMed-Pharma+Disease-SuperClinical-434M",  # BUG FIX: was
-                                                  # incorrectly attributing ALL entities
-                                                  # (including DISEASE-labeled ones from
-                                                  # the separate DiseaseDetect model) to
-                                                  # only PHARMA_MODEL_ID. Now names both.
-            ner_model_version=NER_MODEL_VERSION,
-            validation_passed=validated.all_passed,
-            confidence_score=validated.mean_confidence,
-        )
-        db.add(entity_set)
-        created_entity_sets.append(entity_set)
+            entity_set = ExtractedEntitySet(
+                appointment_id=transcript.appointment_id,
+                transcript_id=transcript.id,
+                target_role=UserRole.NURSE,
+                raw_entities=ner_result.to_dict(),  # COMPLETE, UNFILTERED output -- every
+                                                    # entity both models found, regardless
+                                                    # of confidence, never modified after
+                                                    # creation. This is the permanent,
+                                                    # auditable record of what the models
+                                                    # actually produced.
+                validated_entities=validated.to_dict(),
+                ner_model_name="OpenMed-Pharma+Disease-SuperClinical-434M",  # BUG FIX: was
+                                                    # incorrectly attributing ALL entities
+                                                    # (including DISEASE-labeled ones from
+                                                    # the separate DiseaseDetect model) to
+                                                    # only PHARMA_MODEL_ID. Now names both.
+                ner_model_version=NER_MODEL_VERSION,
+                validation_passed=validated.all_passed,
+                confidence_score=validated.mean_confidence,
+            )
+            db.add(entity_set)
+            created_entity_sets.append(entity_set)
 
-        logger.info(
-            "transcript_entities_extracted",
-            transcript_id=str(transcript.id),
-            entity_count=len(ner_result.entities),
-        )
+            logger.info(
+                "transcript_entities_extracted",
+                transcript_id=str(transcript.id),
+                entity_count=len(ner_result.entities),
+            )
 
     await db.commit()
     for e in created_entity_sets:

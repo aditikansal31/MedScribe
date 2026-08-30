@@ -35,8 +35,10 @@ huggingface_cache/
 *.wav
 *.mp3
 *.m4a
+*.pdf
 storage/audio/
 storage/transcripts/
+storage/prescriptions/
 
 # ==== Logs ====
 logs/*.log

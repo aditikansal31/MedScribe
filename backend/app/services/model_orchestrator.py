@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 import torch
 
+from app.core.metrics import GPU_MODEL_SLOT_LOADED, GPU_VRAM_RESERVED_BYTES, GPU_VRAM_USED_BYTES
 from app.core.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -22,7 +23,7 @@ logger = get_logger(__name__)
 
 class GPUModelSlot(str, Enum):
     MEDASR = "medasr"
-    MEDGEMMA = "medgemma"  # registered in Phase 13, not used yet
+    MEDGEMMA = "medgemma"  # loaded via AutoModelForImageTextToText, see medgemma_service.py
 
 
 class ModelOrchestrator:
@@ -70,6 +71,11 @@ class ModelOrchestrator:
             self._current_slot = slot
             self._current_model = model
             self._current_processor = processor
+            if torch.cuda.is_available():
+                GPU_VRAM_USED_BYTES.set(torch.cuda.memory_allocated())
+                GPU_VRAM_RESERVED_BYTES.set(torch.cuda.memory_reserved())
+            for s in GPUModelSlot:
+                GPU_MODEL_SLOT_LOADED.labels(slot=s.value).set(1 if s == slot else 0)
             logger.info("model_orchestrator_loaded", slot=slot.value)
             return model, processor
 
@@ -95,6 +101,10 @@ class ModelOrchestrator:
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            GPU_VRAM_USED_BYTES.set(torch.cuda.memory_allocated())
+            GPU_VRAM_RESERVED_BYTES.set(torch.cuda.memory_reserved())
+            for s in GPUModelSlot:
+                GPU_MODEL_SLOT_LOADED.labels(slot=s.value).set(0)
         logger.info("model_orchestrator_unloaded")
 
 

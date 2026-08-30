@@ -18,12 +18,14 @@ from app.services.session_service import create_session, revoke_session
 from sqlalchemy import select
 from app.models.user import User
 from app.core.security import verify_password
+from app.core.rate_limiting import limiter
 
 logger = get_logger(__name__)
 settings = get_settings()
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+@limiter.limit(get_settings().RATE_LIMIT_LOGIN)
 
 @router.post("/login", response_model=LoginResponse)
 async def login(
@@ -61,7 +63,7 @@ async def login(
         key=SESSION_COOKIE_NAME,
         value=raw_token,
         httponly=True,
-        secure=False,
+        secure=settings.COOKIE_SECURE,
         samesite="lax",
         max_age=60 * 60 * 8,
     )

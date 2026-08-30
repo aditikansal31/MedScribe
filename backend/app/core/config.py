@@ -52,6 +52,30 @@ class Settings(BaseSettings):
     # single source of truth calling code should check.
     AZURE_SPEECH_KEY: str = ""
     AZURE_SPEECH_REGION: str = ""
+    
+        # ==== CORS (Phase 16 hardening) ====
+    # Comma-separated list, environment-driven -- was hardcoded to
+    # localhost:5173 only since Phase 3. Dev default preserves existing
+    # behavior; a real deployment sets this via .env to the actual
+    # production frontend origin(s), never "*" for a system handling
+    # patient data with credentialed (cookie-based) requests.
+    CORS_ALLOWED_ORIGINS: str = "http://localhost:5173"
+    
+    # ==== Cookie security (Phase 16 hardening) ====
+    # False in dev (HTTP localhost), MUST be True in any real deployment
+    # behind HTTPS -- browsers will not send a secure cookie over plain
+    # HTTP, so flipping this on prematurely (before HTTPS is actually in
+    # place) would silently break login entirely, not just be "more
+    # secure" -- hence a real settable flag, not a hardcoded True.
+    COOKIE_SECURE: bool = False
+    
+     # ==== Rate limiting (Phase 16 hardening) ====
+    RATE_LIMIT_LOGIN: str = "10/minute"  # per-IP, deliberately generous vs account lockout's stricter 5-attempt threshold
+    RATE_LIMIT_DEFAULT: str = "100/minute"  # general API baseline
+
+    @property
+    def cors_allowed_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]
 
     @computed_field
     @property

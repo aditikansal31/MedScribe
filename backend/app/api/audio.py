@@ -20,7 +20,7 @@ from app.core.logging_config import get_logger
 from app.db.session import get_db
 from app.models.appointment import Appointment
 from app.models.audio import AudioRecording
-from app.models.enums import AudioProcessingStatus, AuditAction, InputSource
+from app.models.enums import AudioProcessingStatus, AuditAction, InputSource, RecordingStage
 from app.models.audio import AudioChunk
 from app.schemas.audio import AudioRecordingSummary
 from app.schemas.audio_chunk import AudioChunkSummary
@@ -33,6 +33,11 @@ from app.services.transcription_orchestrator import run_transcription_pipeline
 from app.models.extracted_entity import ExtractedEntitySet
 from app.schemas.extracted_entity import ExtractedEntitySetSummary
 from app.services.ner_orchestrator import run_ner_pipeline
+
+from app.api.deps import require_doctor
+from app.models.prescription import Prescription
+from app.schemas.prescription import PrescriptionSummary
+from app.services.prescription_orchestrator import run_prescription_draft_pipeline
 
 from app.schemas.auth import CurrentUser
 from app.services.audio_service import (
@@ -74,6 +79,7 @@ async def _process_and_store(
     *,
     appointment_id: uuid.UUID,
     input_source: InputSource,
+    recording_stage=RecordingStage,
     raw_bytes: bytes,
     original_filename: str | None,
     mime_type: str | None,
@@ -116,6 +122,7 @@ async def _process_and_store(
         appointment_id=appointment_id,
         uploaded_by_id=current_user.user_id,
         input_source=input_source,
+        recording_stage=recording_stage,
         storage_path="",  # set below once we know the recording's id
         original_filename=original_filename,
         mime_type=mime_type,
@@ -202,6 +209,7 @@ async def upload_audio_file(
     request: Request,
     appointment_id: uuid.UUID = Form(...),
     file: UploadFile = File(...),
+    recording_stage: RecordingStage = Form(default=RecordingStage.DOCTOR_CONSULTATION),
     current_user: CurrentUser = Depends(get_current_user),
     db: DBSession = Depends(get_db),
 ) -> AudioRecordingSummary:
@@ -225,6 +233,7 @@ async def upload_audio_file(
     return await _process_and_store(
         appointment_id=appointment_id,
         input_source=InputSource.UPLOADED_AUDIO,
+        recording_stage=recording_stage,
         raw_bytes=raw_bytes,
         original_filename=file.filename,
         mime_type=file.content_type,
@@ -239,6 +248,7 @@ async def upload_live_recording(
     request: Request,
     appointment_id: uuid.UUID = Form(...),
     file: UploadFile = File(...),
+    recording_stage: RecordingStage = Form(default=RecordingStage.DOCTOR_CONSULTATION),
     current_user: CurrentUser = Depends(get_current_user),
     db: DBSession = Depends(get_db),
 ) -> AudioRecordingSummary:
@@ -270,6 +280,7 @@ async def upload_live_recording(
     return await _process_and_store(
         appointment_id=appointment_id,
         input_source=InputSource.LIVE_RECORDING,
+        recording_stage=recording_stage,
         raw_bytes=raw_bytes,
         original_filename=file.filename or "live_recording.webm",
         mime_type=file.content_type,
@@ -409,3 +420,27 @@ async def list_entities_for_recording(
     )
     entity_sets = result.scalars().all()
     return [ExtractedEntitySetSummary.model_validate(e) for e in entity_sets]
+
+@router.post("/appointments/{appointment_id}/draft-prescription", response_model=PrescriptionSummary, status_code=status.HTTP_201_CREATED)
+async def draft_prescription(
+    appointment_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_doctor),
+    db: DBSession = Depends(get_db),
+) -> PrescriptionSummary:
+    """
+    Generates a draft prescription via MedGemma from validated transcript/
+    entity data. Doctor-only (require_doctor) -- this creates a DRAFT
+    (is_final=False), never a finalized prescription; Phase 14 builds the
+    actual doctor review/approve/edit workflow on top of this.
+
+    REAL, MEASURED PERFORMANCE: ~80-90 seconds per real appointment
+    (2.75-2.9 tok/s due to partial GPU/CPU offload on an 8GB card, see
+    PROJECT_STATUS.md). This is a genuinely slow synchronous request --
+    same known limitation as chunking/transcription, not newly introduced.
+    """
+    try:
+        prescription = await run_prescription_draft_pipeline(appointment_id, current_user.user_id, db)
+    except AudioValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    return PrescriptionSummary.model_validate(prescription)
