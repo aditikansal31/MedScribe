@@ -8,8 +8,7 @@ export function DoctorPage() {
     <AppShell>
       <h1>Overview</h1>
       <p style={{ color: "var(--color-text-secondary)", marginTop: "0.5rem" }}>
-        Welcome back, {user?.full_name}. Patient review and prescription
-        tools will appear here as later phases are built.
+        Welcome back, {user?.full_name}.
       </p>
     </AppShell>
   );

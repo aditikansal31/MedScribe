@@ -26,10 +26,12 @@ const ROLE_NAV_ITEMS: Record<UserRole, NavItem[]> = {
   nurse: [
     { label: "Overview", to: "/nurse" },
     { label: "Patients", to: "/nurse/patients" },
+    { label: "Appointments", to: "/nurse/appointments" },
   ],
   doctor: [
     { label: "Overview", to: "/doctor" },
     { label: "Patients", to: "/doctor/patients" },
+    { label: "Appointments", to: "/doctor/appointments" },
   ],
 };
 

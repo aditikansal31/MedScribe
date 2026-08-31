@@ -12,6 +12,7 @@ from app.services.intake_form_service import (
     create_manual_intake_form,
     finalize_intake_form,
     get_intake_form_or_404,
+    get_intake_form_by_appointment,
     update_intake_form,
 )
 from app.services.intake_orchestrator import run_intake_draft_pipeline
@@ -50,6 +51,24 @@ async def draft_intake_form(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return IntakeFormSummary.model_validate(form)
 
+@router.get(
+    "/appointments/{appointment_id}",
+    response_model=IntakeFormSummary,
+)
+async def get_intake_form_for_appointment(
+    appointment_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+) -> IntakeFormSummary:
+    try:
+        form = await get_intake_form_by_appointment(appointment_id, db)
+    except AudioValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        )
+
+    return IntakeFormSummary.model_validate(form)
 
 @router.get("/{intake_form_id}", response_model=IntakeFormSummary)
 async def get_intake_form(

@@ -69,6 +69,32 @@ async def get_intake_form_or_404(intake_form_id: uuid.UUID, db: DBSession) -> In
         raise AudioValidationError("Intake form not found")
     return form
 
+async def get_intake_form_by_appointment(
+    appointment_id: uuid.UUID,
+    db: DBSession,
+) -> IntakeForm:
+    """
+    Return the current/latest intake form for an appointment.
+
+    Older duplicate rows may exist from previous frontend behavior, so
+    prefer a finalized form and then the most recently created form.
+    """
+    result = await db.execute(
+        select(IntakeForm)
+        .where(IntakeForm.appointment_id == appointment_id)
+        .order_by(
+            IntakeForm.is_final.desc(),
+            IntakeForm.created_at.desc(),
+        )
+        .limit(1)
+    )
+
+    form = result.scalar_one_or_none()
+
+    if form is None:
+        raise AudioValidationError("Intake form not found")
+
+    return form
 
 async def update_intake_form(
     intake_form_id: uuid.UUID,

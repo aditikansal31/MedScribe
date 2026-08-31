@@ -12,6 +12,8 @@ import { PatientsPage } from "./pages/PatientsPage";
 import { UsersPage } from "./pages/UsersPage";
 import { HitlPage } from "./pages/HitlPage";
 import { AuditLogPage } from "./pages/AuditLogPage";
+import { AppointmentDetailPage } from "./pages/AppointmentDetailPage";
+import { AppointmentsPage } from "./pages/AppointmentsPage";
 
 function App() {
   return (
@@ -83,11 +85,52 @@ function App() {
               </ProtectedRoute>
             }
           />
+                    <Route
+            path="/nurse/appointments"
+            element={
+              <ProtectedRoute allowedRoles={["nurse"]}>
+                <AppointmentsPage />
+              </ProtectedRoute>
+            }
+          />
+          
+          <Route
+            path="/nurse/appointments/:appointmentId"
+            element={
+              <ProtectedRoute allowedRoles={["nurse"]}>
+                <AppointmentDetailPage />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/doctor/*"
             element={
               <ProtectedRoute allowedRoles={["doctor"]}>
                 <DoctorPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/doctor/patients"
+            element={
+              <ProtectedRoute allowedRoles={["doctor"]}>
+                <PatientsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/doctor/appointments"
+            element={
+              <ProtectedRoute allowedRoles={["doctor"]}>
+                <AppointmentsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/doctor/appointments/:appointmentId"
+            element={
+              <ProtectedRoute allowedRoles={["doctor"]}>
+                <AppointmentDetailPage />
               </ProtectedRoute>
             }
           />

@@ -10,6 +10,9 @@ what are results." vs "doctor's prescription is problem symptoms
 medications advise followups existing conditions."
 """
 from pydantic import BaseModel, Field
+import uuid
+from datetime import datetime
+
 
 
 class PriorTestResult(BaseModel):
@@ -55,14 +58,14 @@ class CreateIntakeFormRequest(BaseModel):
 
 
 class IntakeFormSummary(BaseModel):
-    id: str
-    appointment_id: str
-    nurse_id: str
-    source_entity_set_id: str | None
+    id: uuid.UUID
+    appointment_id: uuid.UUID
+    nurse_id: uuid.UUID
+    source_entity_set_id: uuid.UUID | None
     input_source: str
     form_data: dict
     is_final: bool
-    submitted_at: str | None
-    created_at: str
+    submitted_at: datetime | None
+    created_at: datetime
 
     model_config = {"from_attributes": True}

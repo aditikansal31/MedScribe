@@ -4,6 +4,9 @@ import * as patientsApi from "../api/patients";
 import type { Patient, CreatePatientPayload } from "../types/patient";
 import { ApiError } from "../api/client";
 import styles from "./PatientsPage.module.css";
+import { useNavigate } from "react-router-dom";
+import * as appointmentsApi from "../api/appointments";
+import { useAuth } from "../context/AuthContext";
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {
@@ -14,6 +17,8 @@ function formatDate(iso: string): string {
 }
 
 export function PatientsPage() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +52,21 @@ export function PatientsPage() {
     return () => clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchInput]);
+
+  const [creatingForPatientId, setCreatingForPatientId] = useState<string | null>(null);
+
+  async function handleNewAppointment(patientId: string) {
+    setCreatingForPatientId(patientId);
+    try {
+      const appointment = await appointmentsApi.createAppointment({ patient_id: patientId });
+      const rolePath = user?.role === "doctor" ? "doctor" : "nurse";
+      navigate(`/${rolePath}/appointments/${appointment.id}`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : "Failed to create appointment.");
+    } finally {
+      setCreatingForPatientId(null);
+    }
+  }
 
   function handlePatientCreated(patient: Patient) {
     setIsCreateOpen(false);
@@ -94,6 +114,7 @@ export function PatientsPage() {
                 <th>Sex</th>
                 <th>Phone</th>
                 <th>Registered</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -105,6 +126,16 @@ export function PatientsPage() {
                   <td>{p.sex}</td>
                   <td>{p.phone_number || "—"}</td>
                   <td>{formatDate(p.created_at)}</td>
+                  <td>
+                    <button
+                      className={styles.primaryButton}
+                      style={{ fontSize: "0.78rem", padding: "0.35rem 0.7rem" }}
+                      disabled={creatingForPatientId === p.id}
+                      onClick={() => handleNewAppointment(p.id)}
+                    >
+                      {creatingForPatientId === p.id ? "Creating..." : "New Appointment"}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

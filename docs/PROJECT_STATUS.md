@@ -1154,6 +1154,159 @@ Phase 16: Hardening — DONE (scope explicitly narrowed to security/hardening on
   FIPS 140-2/3 compliance decision (flagged since Phase 4 as a possible future
   requirement, still not resolved -- would require replacing Argon2id with
   PBKDF2-SHA256 for password hashing specifically if ever mandated).
+## Nurse Intake Form (post-Phase-16, pre-Phase-17 work)
+Closed the real feature gap flagged since Phase 13: nurse-side intake drafting
+(vitals) was never built, only doctor-side prescription drafting.
+BUILT BOTH PATHS, not just AI-drafting -- manual entry is the PRIMARY path (a nurse
+directly measuring vitals with real equipment has no reason to route through a
+transcript), AI-assist is secondary/best-effort:
+  app/services/intake_form_service.py   Manual create/edit/finalize, mirrors Phase
+                                        14's prescription edit/finalize pattern
+                                        exactly (in-place editing, provenance
+                                        preservation on edit, rejection of edits
+                                        post-finalization). TESTED AND CONFIRMED
+                                        working end-to-end (create -> edit ->
+                                        finalize).
+  app/api/intake_forms.py               POST /intake-forms (manual, require_nurse),
+                                        GET/PATCH/finalize, POST /intake-forms/
+                                        appointments/{id}/draft (AI-assist).
+
+REAL DATA MODEL GAP FOUND AND FIXED: user clarified the actual clinical workflow
+involves TWO SEPARATE recordings per appointment (nurse vitals-taking session,
+doctor consultation) -- AudioRecording had no field distinguishing which stage a
+recording belonged to. Added RecordingStage enum (nurse_intake/doctor_consultation)
++ AudioRecording.recording_stage column via a real Alembic migration, server_default
+doctor_consultation (deliberate: preserves correct categorization of all existing
+test data, which was entirely doctor-consultation recordings; new recordings must
+explicitly opt into nurse_intake). Upload endpoints (POST /audio/upload,
+POST /audio/record) updated to accept this as a form field.
+
+REAL, SERIOUS SAFETY FINDING from live MedGemma testing (not caught by design review
+alone): first version of the vitals-extraction prompt caused MedGemma to
+misclassify "six seven times a day" (bowel movement frequency, from context) as a
+PULSE RATE reading -- a genuinely dangerous misclassification if trusted
+uncritically in a clinical system. Also ran 258s (nearly 3x slower than prescription
+drafting) and got stuck emitting visible chain-of-thought tokens
+(`<unused94>thought`) instead of the clean requested format, cut off mid-reasoning
+at the 400-token cap. REBUILT the prompt (app/services/intake_prompt_builder.py):
+now REQUIRES MedGemma to quote the exact source sentence alongside every extracted
+value, explicitly warns against the specific observed failure mode (frequency/
+duration/dosage numbers being confused for vital sign readings), and instructs
+explicit "Not mentioned" rather than any guess. Reasoning: forcing quoted
+traceability creates a structural check a human reviewer can verify a claimed value
+against, rather than trusting a bare, unverifiable number -- addresses the root
+mechanism of the failure, not just a stronger-worded warning.
+
+Orchestrator (app/services/intake_orchestrator.py) correctly joins
+Transcript->AudioChunk->AudioRecording and filters to recording_stage=nurse_intake
+ONLY for the appointment -- explicit fix from the orchestrator's first draft, which
+had incorrectly pulled from ALL transcripts regardless of recording stage, before
+the two-recording architecture question was even raised.
+
+HONEST SCOPE LIMITATION, not hidden: structured parsing of MedGemma's vitals
+extraction output (into the real VitalSigns/PriorTestResult fields) was NOT built
+this pass -- Phase 13's prescription parser needed real, dedicated debugging effort
+before it worked correctly (the section-boundary and Medication-heading bugs), and
+rushing an equally fragile second parser for a structurally different, more
+fragile output format (quoted spans + "Not mentioned" placeholders) without
+dedicated testing was judged the wrong trade-off. Current AI-assist path stores the
+raw quoted-extraction text as a human-readable record; a nurse reviews it and
+manually enters confirmed values via the (fully working, tested) manual-entry
+PATCH endpoint. This is a genuine, working partial solution, not silently
+incomplete -- flagged clearly here and in the code itself.
+
+NOT TESTED: the AI-assist draft path itself has NOT been run against a real
+nurse_intake-stage recording end-to-end (no such recording exists in the test data
+yet -- the one real test appointment used throughout this project is entirely a
+doctor-consultation recording). The prompt fix and orchestrator logic are built and
+reasoned through carefully, but genuinely unverified against a real nurse-intake
+audio sample. Flagged as the first thing to test once real two-recording test data
+exists.
+
+## Frontend Completion (post-Phase-16 work): Phases 7-14 UI, closing the
+## "no frontend surface" gap flagged as open since Phase 7
+Closed the second major post-Phase-16 gap: every backend capability from Phases
+7-14 (audio upload/recording, chunking, transcription, NER, prescription drafting/
+editing, intake forms) had ONLY ever been exercised via /docs. Built as a single
+cohesive Appointment Detail page (not scattered separate pages) so a nurse/doctor
+walks through the real pipeline naturally in one place, matching how the actual
+clinical workflow proceeds stage by stage.
+
+New types: appointment.ts, audio.ts, transcriptExtended.ts (kept separate from
+whatever transcript.ts already existed from earlier phases, to avoid conflicting
+with anything in use), prescription.ts, intakeForm.ts.
+New API modules: appointments.ts, pipeline.ts (groups every Phase 7-13 call under
+one module since they share the /audio router prefix), prescriptions.ts,
+intakeForms.ts. pipeline.ts required a SEPARATE multipart fetch wrapper
+(apiRequestMultipart) distinct from Phase 6's JSON-only apiRequest -- the existing
+client always sets Content-Type: application/json and JSON.stringifies the body,
+which is wrong for FormData uploads (needs the browser to set its own multipart
+boundary automatically) -- caught and built correctly rather than forcing JSON
+content-type onto a file upload.
+
+AppointmentDetailPage.tsx -- six accordion-style sections matching the real
+pipeline order (audio -> chunk -> transcribe -> entities -> prescription ->
+intake form), each independently expandable, each showing real backend status
+badges (pending/in-progress/complete/failed) derived from actual
+processing_status values, not decorative placeholders:
+  1. Audio: file upload AND live browser recording (MediaRecorder API, produces
+     audio/webm -- already covered by Phase 7's ALLOWED_AUDIO_MIME_TYPES, no
+     format conversion needed). recording_stage selector (nurse_intake vs
+     doctor_consultation) defaults to doctor_consultation, matching the backend's
+     own server_default from the recording_stage migration.
+  2/3/4. Chunking/Transcription/Entities: trigger buttons correctly disabled until
+     the prior stage's real processing_status allows the next step (e.g. chunk
+     button disabled until status=uploaded, transcribe disabled until
+     chunking_complete) -- UI can't attempt an out-of-order pipeline call the
+     backend would reject anyway. Loading states explicitly warn about real
+     multi-minute durations (chunking, transcription) rather than looking hung.
+     Quality report / entity accept-reject status shown inline with real color-
+     coded badges, reusing the visual language established in Phase 6's HITL page.
+  5. Prescription: doctor-only editing (role-gated in the UI, matching the
+     backend's require_doctor), full structured edit form (problem summary
+     textarea, add/remove list editors for symptoms/conditions/advice/follow-up,
+     a dedicated medications list), AI-provenance disclosure banner shown when
+     ai_generated=true, all fields correctly become read-only once is_final=true
+     -- mirrors Phase 14's backend edit-rejection-after-finalize behavior in the
+     UI, not just relying on the API call failing.
+  6. Intake Form: nurse-only, offers BOTH manual entry (primary path) and
+     AI-assisted extraction from audio (secondary path, matching the backend's
+     own two-path design from the nurse-intake-form work) -- AI path explicitly
+     shows the raw quoted-extraction text for the nurse to verify against, per
+     the real safety finding (pulse-rate misclassification) from that backend
+     work; UI framing explicitly asks the nurse to manually confirm values rather
+     than presenting AI-extracted numbers as already-trustworthy.
+  A reusable StringListEditor component handles the four simple string-list
+  fields (symptoms/conditions/advice/follow-up) with one shared implementation
+  rather than four near-duplicate ad hoc list editors.
+
+Also built: "New Appointment" action added to the existing Phase 6 Patients page
+(create-then-immediately-navigate to the new appointment's detail page -- no
+intermediate confirmation form, since CreateAppointmentRequest only strictly
+requires patient_id and the detail page itself is where real work happens;
+flagged as a deliberate simplification, not a forced-correct choice, easy to add
+a chief-complaint-capture step later if wanted). New AppointmentsPage.tsx (list
+view, reuses Phase 6's PatientsPage.module.css table styling for visual
+consistency) so existing in-progress appointments can be found and reopened, not
+just newly created ones. New sidebar nav entries ("Appointments") for both nurse
+and doctor roles.
+
+Tested end-to-end: the full click-through loop (Patients -> New Appointment ->
+Appointment Detail page showing real existing test data across all six sections
+-> Appointments list -> reopen) confirmed working for the first time. This is the
+first point in the whole project where the frontend and the full backend pipeline
+(Phases 7-14) have been exercised together as a real, connected user workflow,
+rather than the backend being tested exclusively via /docs.
+
+NOT YET DONE: no way to reach IntakeForm's chunk/transcribe/entities view
+separately for a nurse-intake-stage recording specifically (the current page only
+drives chunk/transcribe/entities sections off the FIRST recording returned,
+regardless of its stage -- adequate for the single-recording test data used
+throughout this project, but not yet validated against a real two-recording
+appointment with both a nurse-intake and doctor-consultation recording present
+simultaneously). Appointment creation has no chief-complaint-capture step. No
+mobile-specific layout testing performed on this new page.
+
 Phase 17: Full docker-compose production profile + deployment runbook + government
   presentation prep — NEXT
 
