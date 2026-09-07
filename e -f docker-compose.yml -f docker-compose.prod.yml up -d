@@ -1,0 +1,449 @@
+[1mdiff --git a/backend/app/core/config.py b/backend/app/core/config.py[m
+[1mindex 91cfd41..4f53e3f 100644[m
+[1m--- a/backend/app/core/config.py[m
+[1m+++ b/backend/app/core/config.py[m
+[36m@@ -53,13 +53,24 @@[m [mclass Settings(BaseSettings):[m
+     AZURE_SPEECH_KEY: str = ""[m
+     AZURE_SPEECH_REGION: str = ""[m
+     [m
+[31m-        # ==== CORS (Phase 16 hardening) ====[m
+[32m+[m[32m    # ==== Local PII masking middleware ====[m
+[32m+[m[32m    # MedGemma must only receive tokenized prompts. If the privacy boundary[m
+[32m+[m[32m    # cannot be reached, the draft request fails closed by default.[m
+[32m+[m[32m    PII_MASKING_ENABLED: bool = True[m
+[32m+[m[32m    PII_MASKING_REQUIRED: bool = True[m
+[32m+[m[32m    # Port 8001 deliberately avoids MedScribe's FastAPI backend on 8000.[m
+[32m+[m[32m    PII_MASKING_URL: str = "http://127.0.0.1:8001"[m
+[32m+[m[32m    PII_MASKING_API_KEY: str = "dev-only-key"[m
+[32m+[m[32m    PII_MASKING_TIMEOUT_SECONDS: float = 5.0[m
+[32m+[m
+[32m+[m[41m    [m
+[32m+[m[32m    # ==== CORS (Phase 16 hardening) ====[m
+     # Comma-separated list, environment-driven -- was hardcoded to[m
+     # localhost:5173 only since Phase 3. Dev default preserves existing[m
+     # behavior; a real deployment sets this via .env to the actual[m
+     # production frontend origin(s), never "*" for a system handling[m
+     # patient data with credentialed (cookie-based) requests.[m
+[31m-    CORS_ALLOWED_ORIGINS: str = "http://localhost:5173"[m
+[32m+[m[32m    CORS_ALLOWED_ORIGINS: str = "http://localhost"[m
+     [m
+     # ==== Cookie security (Phase 16 hardening) ====[m
+     # False in dev (HTTP localhost), MUST be True in any real deployment[m
+[36m@@ -95,7 +106,7 @@[m [mclass Settings(BaseSettings):[m
+         """Async connection string, used by the FastAPI app at runtime (asyncpg driver)."""[m
+         return ([m
+             f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"[m
+[31m-            f"@localhost:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"[m
+[32m+[m[32m            f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"[m
+         )[m
+ [m
+     @property[m
+[36m@@ -103,12 +114,12 @@[m [mclass Settings(BaseSettings):[m
+         """Sync connection string, used only by Alembic's migration runner."""[m
+         return ([m
+             f"postgresql+psycopg2://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"[m
+[31m-            f"@localhost:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"[m
+[32m+[m[32m            f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"[m
+         )[m
+ [m
+     @property[m
+     def REDIS_URL(self) -> str:[m
+[31m-        return f"redis://:{self.REDIS_PASSWORD}@localhost:{self.REDIS_PORT}/0"[m
+[32m+[m[32m        return f"redis://:{self.REDIS_PASSWORD}"f"@{self.REDIS_HOST}:{self.REDIS_PORT}/0"[m
+ [m
+ [m
+ @lru_cache[m
+[1mdiff --git a/backend/requirements.txt b/backend/requirements.txt[m
+[1mindex 07fc313..38ca757 100644[m
+[1m--- a/backend/requirements.txt[m
+[1m+++ b/backend/requirements.txt[m
+[36m@@ -1,3 +1,4 @@[m
+[32m+[m[32maccelerate==1.14.0[m
+ aiohappyeyeballs==2.7.1[m
+ aiohttp==3.14.3[m
+ aiosignal==1.4.0[m
+[36m@@ -13,18 +14,25 @@[m [masyncpg==0.31.0[m
+ attrs==26.1.0[m
+ azure-cognitiveservices-speech==1.51.2[m
+ azure-core==1.41.0[m
+[32m+[m[32mblis==1.3.3[m
+[32m+[m[32mcatalogue==2.0.10[m
+ certifi==2026.7.22[m
+ cffi==2.1.1[m
+ charset-normalizer==3.5.1[m
+ click==8.4.2[m
+[32m+[m[32mcloudpathlib==0.25.0[m
+ colorlog==6.12.0[m
+[32m+[m[32mconfection==1.3.3[m
+[32m+[m[32mconllu==6.0.0[m
+ contourpy==1.3.3[m
+ cryptography==50.0.0[m
+ cuda-bindings==13.3.1[m
+ cuda-pathfinder==1.7.0[m
+ cuda-toolkit==13.0.3.0[m
+ cycler==0.12.1[m
+[32m+[m[32mcymem==2.0.13[m
+ decorator==5.3.1[m
+[32m+[m[32mDeprecated==1.3.1[m
+ dnspython==2.8.0[m
+ ecdsa==0.19.2[m
+ einops==0.8.2[m
+[36m@@ -53,6 +61,7 @@[m [mlazy-loader==0.5[m
+ librosa==1.0.0[m
+ lightning==2.6.5[m
+ lightning-utilities==0.15.3[m
+[32m+[m[32mlimits==5.8.0[m
+ llvmlite==0.49.0[m
+ Mako==1.4.1[m
+ markdown-it-py==4.2.0[m
+[36m@@ -62,8 +71,10 @@[m [mmdurl==0.1.2[m
+ mpmath==1.3.0[m
+ msgpack==1.2.2[m
+ multidict==6.7.1[m
+[32m+[m[32mmurmurhash==1.0.15[m
+ narwhals==2.25.0[m
+ networkx==3.6.1[m
+[32m+[m[32mnmslib-metabrainz==2.1.3[m
+ numba==0.67.0[m
+ numpy==2.5.2[m
+ nvidia-cublas==13.1.1.3[m
+[36m@@ -97,9 +108,12 @@[m [mpandas==3.0.5[m
+ pillow==12.3.0[m
+ platformdirs==4.11.4[m
+ pooch==1.9.0[m
+[32m+[m[32mpreshed==3.0.13[m
+ primePy==1.3[m
+[32m+[m[32mprometheus_client==0.26.0[m
+ propcache==0.5.2[m
+ protobuf==7.36.0[m
+[32m+[m[32mpsutil==7.2.2[m
+ psycopg2-binary==2.9.12[m
+ pyannote-audio==4.0.7[m
+ pyannote-core==6.0.1[m
+[36m@@ -108,12 +122,14 @@[m [mpyannote-metrics==4.1[m
+ pyannote-pipeline==4.0.0[m
+ pyannoteai-sdk==0.4.0[m
+ pyasn1==0.6.4[m
+[32m+[m[32mpybind11==3.1.0[m
+ pycparser==3.0[m
+ pydantic==2.13.4[m
+ pydantic-settings==2.15.0[m
+ pydantic_core==2.46.4[m
+ Pygments==2.21.0[m
+ pyparsing==3.3.2[m
+[32m+[m[32mpysbd==0.3.4[m
+ python-dateutil==2.9.0.post0[m
+ python-dotenv==1.2.3[m
+ python-jose==3.5.0[m
+[36m@@ -124,6 +140,7 @@[m [mpytorch-metric-learning==2.9.0[m
+ PyYAML==6.0.3[m
+ redis==8.1.0[m
+ regex==2026.7.19[m
+[32m+[m[32mreportlab==5.0.1[m
+ requests==2.34.2[m
+ rich==15.0.0[m
+ rsa==4.9.1[m
+[36m@@ -131,22 +148,29 @@[m [mruamel.yaml==0.18.17[m
+ ruamel.yaml.clib==0.2.15[m
+ safetensors==0.8.0[m
+ scikit-learn==1.9.0[m
+[31m-scipy==1.18.1[m
+[32m+[m[32mscipy==1.17.1[m
+ semver==3.0.4[m
+ sentencepiece==0.2.2[m
+ setuptools==84.0.0[m
+ shellingham==1.5.4[m
+ silero-vad==6.2.1[m
+ six==1.17.0[m
+[32m+[m[32mslowapi==0.1.10[m
+[32m+[m[32msmart_open==8.0.1[m
+ sortedcontainers==2.4.0[m
+ soundfile==0.14.0[m
+ soxr==1.1.0[m
+[32m+[m[32mspacy==3.8.16[m
+[32m+[m[32mspacy-legacy==3.0.12[m
+[32m+[m[32mspacy-loggers==1.0.5[m
+ speechbrain==1.1.0[m
+ SQLAlchemy==2.0.52[m
+[32m+[m[32msrsly==2.5.3[m
+ starlette==1.6.0[m
+ structlog==26.1.0[m
+ sympy==1.14.0[m
+ tensorboardX==2.6.5[m
+[32m+[m[32mthinc==8.3.13[m
+ threadpoolctl==3.6.0[m
+ tokenizers==0.23.1[m
+ torch==2.13.0[m
+[36m@@ -164,6 +188,9 @@[m [mtyping_extensions==4.16.0[m
+ urllib3==2.7.0[m
+ uvicorn==0.52.4[m
+ uvloop==0.22.1[m
+[32m+[m[32mwasabi==1.1.3[m
+ watchfiles==1.2.0[m
+[32m+[m[32mweasel==1.0.0[m
+ websockets==17.0.1[m
+[32m+[m[32mwrapt==2.3.0[m
+ yarl==1.24.5[m
+[1mdiff --git a/docs/PROJECT_STATUS.md b/docs/PROJECT_STATUS.md[m
+[1mindex 9d89685..61c06ec 100644[m
+[1m--- a/docs/PROJECT_STATUS.md[m
+[1m+++ b/docs/PROJECT_STATUS.md[m
+[36m@@ -1,4 +1,4 @@[m
+[31m-# MedSTT Project Status — End of Phase 4[m
+[32m+[m[32m# MedSTT Project Status — End of Phase 16[m
+ [m
+ ## Environment[m
+ - WSL2 Ubuntu, project root: ~/medstt[m
+[36m@@ -1307,8 +1307,250 @@[m [mappointment with both a nurse-intake and doctor-consultation recording present[m
+ simultaneously). Appointment creation has no chief-complaint-capture step. No[m
+ mobile-specific layout testing performed on this new page.[m
+ [m
+[31m-Phase 17: Full docker-compose production profile + deployment runbook + government[m
+[31m-  presentation prep — NEXT[m
+[32m+[m[32m# MedSTT: Architecture and Capability Document[m
+[32m+[m
+[32m+[m[32m**Purpose of this document:** a technical, factual account of what MedSTT is,[m
+[32m+[m[32mhow it works, what it has been verified to do, and what its current, honest[m
+[32m+[m[32mlimitations are. This document is written for government technical review. It[m
+[32m+[m[32mdoes not minimize open items or unresolved risks — every limitation named here[m
+[32m+[m[32mis a real, current state of the system, not a hypothetical edge case.[m
+[32m+[m
+[32m+[m[32m---[m
+[32m+[m
+[32m+[m[32m## 1. What MedSTT Does[m
+[32m+[m
+[32m+[m[32mMedSTT converts audio recordings of clinician-patient conversations into[m
+[32m+[m[32mstructured clinical documentation: a nurse intake record (vitals, prior test[m
+[32m+[m[32mresults) and a doctor's prescription record (problem summary, symptoms,[m
+[32m+[m[32mmedications, advice, follow-up), with a generated PDF as the final clinical[m
+[32m+[m[32martifact. It is designed around a three-role model — admin, nurse, doctor —[m
+[32m+[m[32mmatching how a real clinical encounter proceeds.[m
+[32m+[m
+[32m+[m[32m**The system does not make clinical decisions.** Every AI-generated output —[m
+[32m+[m[32mtranscripts, extracted entities, drafted intake data, drafted prescriptions —[m
+[32m+[m[32mis explicitly a draft requiring human review before it becomes part of the[m
+[32m+[m[32mclinical record. This is not a design aspiration; it is enforced at multiple[m
+[32m+[m[32mlevels described in Section 3.[m
+[32m+[m
+[32m+[m[32m---[m
+[32m+[m
+[32m+[m[32m## 2. System Architecture[m
+[32m+[m
+[32m+[m[32m### 2.1 High-level pipeline[m
+[32m+[m
+[32m+[m[32mA clinical encounter produces one or two audio recordings (a nurse vitals-[m
+[32m+[m[32mtaking session and/or a doctor consultation), which move through the following[m
+[32m+[m[32mstages:[m
+[32m+[m
+[32m+[m[32m1. **Ingestion** — upload or live browser recording, validated (real file[m
+[32m+[m[32m   properties inspected via ffprobe, not trusted from client-supplied metadata)[m
+[32m+[m[32m   and normalized to a standard 16kHz mono WAV format.[m
+[32m+[m[32m2. **Chunking** — voice activity detection (Silero VAD) and speaker[m
+[32m+[m[32m   diarization (pyannote.audio) segment the recording into speaker-labeled,[m
+[32m+[m[32m   appropriately-sized chunks.[m
+[32m+[m[32m3. **Transcription** — each chunk is transcribed by a local, GPU-resident[m
+[32m+[m[32m   speech-to-text model (Google's MedASR), run concurrently with a cloud[m
+[32m+[m[32m   fallback (Azure AI Speech) for cross-verification.[m
+[32m+[m[32m4. **Quality assessment** — each transcript is scored using the model's own[m
+[32m+[m[32m   real per-token confidence (not a heuristic proxy), combined with pattern-[m
+[32m+[m[32m   based checks (repetition, speech-rate anomalies) and cross-checked against[m
+[32m+[m[32m   the cloud transcription for agreement.[m
+[32m+[m[32m5. **Human-in-the-loop (HITL) flagging** — any transcript failing quality or[m
+[32m+[m[32m   consensus checks is routed to a review queue rather than silently accepted.[m
+[32m+[m[32m6. **Entity extraction** — validated transcripts are processed by clinical[m
+[32m+[m[32m   named-entity-recognition models (disease and medication/chemical entities),[m
+[32m+[m[32m   each extraction independently confidence-scored and validated.[m
+[32m+[m[32m7. **Drafting** — a local large language model (Google's MedGemma) drafts[m
+[32m+[m[32m   structured clinical content from the validated transcripts and entities:[m
+[32m+[m[32m   vitals/test extraction for nurse intake, and problem/symptoms/medications/[m
+[32m+[m[32m   advice/follow-up for the doctor's prescription.[m
+[32m+[m[32m8. **Human review and finalization** — a doctor reviews and edits the drafted[m
+[32m+[m[32m   prescription; a nurse reviews and edits the intake form. Only after explicit[m
+[32m+[m[32m   finalization does either become part of the permanent record. A PDF is[m
+[32m+[m[32m   generated at finalization, with an explicit AI-provenance disclosure printed[m
+[32m+[m[32m   on the document itself.[m
+[32m+[m
+[32m+[m[32m### 2.2 Technology stack[m
+[32m+[m
+[32m+[m[32m| Layer | Technology | Notes |[m
+[32m+[m[32m|---|---|---|[m
+[32m+[m[32m| Backend | FastAPI, async SQLAlchemy, Alembic | Python 3.12 |[m
+[32m+[m[32m| Frontend | React, Vite, TypeScript | Role-based routing and access control |[m
+[32m+[m[32m| Database | PostgreSQL 16 | UUID primary keys, append-only audit log, row-versioning for AI-generated content |[m
+[32m+[m[32m| Cache/sessions | Redis 7 | Server-side sessions (not JWT) for instant revocation |[m
+[32m+[m[32m| Local speech-to-text | google/medasr (105M param Conformer) | GPU-resident, CUDA required |[m
+[32m+[m[32m| Cloud speech-to-text | Azure AI Speech | Runs concurrently with local ASR for cross-verification |[m
+[32m+[m[32m| Speaker diarization | pyannote.audio 4.0.7 | CPU-only in this deployment |[m
+[32m+[m[32m| Voice activity detection | Silero VAD | CPU-only |[m
+[32m+[m[32m| Clinical entity extraction | OpenMed NER models (PharmaDetect, DiseaseDetect, 434M params each) | CPU-only |[m
+[32m+[m[32m| Clinical text generation | google/medgemma-1.5-4b-it | GPU-resident, CUDA required, ~8GB VRAM |[m
+[32m+[m[32m| Observability | Prometheus metrics, structured JSON logging, cross-request tracing | |[m
+[32m+[m[32m| Containerization | Docker, Docker Compose | GPU passthrough via NVIDIA Container Toolkit |[m
+[32m+[m
+[32m+[m[32m### 2.3 GPU resource management[m
+[32m+[m
+[32m+[m[32mThe local speech-to-text model (MedASR) and the local text-generation model[m
+[32m+[m[32m(MedGemma) both require CUDA and cannot both be resident in GPU memory[m
+[32m+[m[32msimultaneously on an 8GB card — MedGemma alone was measured using approximately[m
+[32m+[m[32m6.2GB of the card's 8GB capacity in isolation. A dedicated model orchestrator[m
+[32m+[m[32menforces strict mutual exclusion: only one model is ever loaded at a time, with[m
+[32m+[m[32man explicit lock preventing race conditions during concurrent requests, and[m
+[32m+[m[32mexplicit memory cleanup on every model swap. This is a hard architectural[m
+[32m+[m[32mconstraint of the current deployment, not an optimization choice — it directly[m
+[32m+[m[32mdetermines that the production deployment runs as a single backend worker[m
+[32m+[m[32mprocess (see Section 5).[m
+[32m+[m
+[32m+[m[32m---[m
+[32m+[m
+[32m+[m[32m## 3. Safety and Human Oversight Design[m
+[32m+[m
+[32m+[m[32mThis system was built around a consistent principle: AI-generated content is[m
+[32m+[m[32mnever presented as, or silently converted into, an authoritative clinical[m
+[32m+[m[32mrecord without human review. This is enforced structurally, not just through[m
+[32m+[m[32mpolicy:[m
+[32m+[m
+[32m+[m[32m- **Every AI-generated database record carries explicit provenance fields**[m
+[32m+[m[32m  (which model produced it, what version, the complete raw output) that[m
+[32m+[m[32m  persist even after a human edits the record. The original AI output is never[m
+[32m+[m[32m  silently overwritten or lost.[m
+[32m+[m[32m- **Prescriptions and intake forms cannot be finalized by the system itself.**[m
+[32m+[m[32m  They are created in a draft state and require an explicit action by the[m
+[32m+[m[32m  responsible role (doctor for prescriptions, nurse for intake forms) to[m
+[32m+[m[32m  finalize. Editing a finalized record is rejected by the system.[m
+[32m+[m[32m- **The final PDF document itself carries an explicit AI-provenance[m
+[32m+[m[32m  disclosure** whenever any part of its content was AI-drafted, stating the[m
+[32m+[m[32m  model used and that the content was reviewed and approved by the named[m
+[32m+[m[32m  clinician and requires independent verification. This is not only an[m
+[32m+[m[32m  internal database flag — it is visible on the physical/printed clinical[m
+[32m+[m[32m  artifact.[m
+[32m+[m[32m- **A dedicated human-in-the-loop review queue** captures any transcript that[m
+[32m+[m[32m  fails quality checks (low model confidence, detected repetition, anomalous[m
+[32m+[m[32m  speech rate) or disagrees materially with the independent cloud[m
+[32m+[m[32m  transcription, routing these to an administrator for review rather than[m
+[32m+[m[32m  silently accepting uncertain content into the pipeline.[m
+[32m+[m[32m- **Both underlying AI models' own publishers state explicitly that their[m
+[32m+[m[32m  outputs require independent clinical verification and are not intended to[m
+[32m+[m[32m  directly inform diagnosis or treatment decisions.** This system's entire[m
+[32m+[m[32m  review-and-finalize architecture exists specifically to honor that[m
+[32m+[m[32m  requirement, not as an incidental feature.[m
+[32m+[m
+[32m+[m[32m### 3.1 A concrete example of this design working as intended[m
+[32m+[m
+[32m+[m[32mDuring development, a real quality issue was identified and corrected: an[m
+[32m+[m[32mearly version of the vitals-extraction logic misidentified a spoken phrase[m
+[32m+[m[32mdescribing bowel movement frequency ("six or seven times a day") as a pulse[m
+[32m+[m[32mrate reading. This was caught through structured testing against real[m
+[32m+[m[32mrecordings before the feature was used in any live capacity, and the[m
+[32m+[m[32mextraction logic was rebuilt to require the model to cite the exact source[m
+[32m+[m[32msentence supporting any extracted value — creating a verifiable link a human[m
+[32m+[m[32mreviewer can check, rather than trusting an unverifiable number. This is[m
+[32m+[m[32mrepresentative of the broader development approach: every AI integration in[m
+[32m+[m[32mthis system was tested against real audio and real transcripts before being[m
+[32m+[m[32mconsidered complete, and issues found in that testing were treated as design[m
+[32m+[m[32mproblems requiring a structural fix, not tuned away with a quick patch.[m
+[32m+[m
+[32m+[m[32m---[m
+[32m+[m
+[32m+[m[32m## 4. Data Handling and Security[m
+[32m+[m
+[32m+[m[32m- **Authentication**: server-side sessions (Redis-backed), enabling instant[m
+[32m+[m[32m  revocation of access — an administrator deactivating a compromised or[m
+[32m+[m[32m  departing user's account takes effect immediately, not upon token expiry.[m
+[32m+[m[32m- **Password storage**: Argon2id (current OWASP recommendation), with account[m
+[32m+[m[32m  lockout after repeated failed attempts and rate limiting on the login[m
+[32m+[m[32m  endpoint as a separate, complementary protection against broader abuse.[m
+[32m+[m[32m- **Role-based access control**: every endpoint enforces role requirements[m
+[32m+[m[32m  (admin/nurse/doctor) at the API layer.[m
+[32m+[m[32m- **Audit logging**: every significant action (logins, record creation,[m
+[32m+[m[32m  edits, status changes, HITL resolutions, prescription finalization) is[m
+[32m+[m[32m  written to an append-only audit log with no update or delete capability.[m
+[32m+[m[32m- **Data integrity**: UUID primary keys (record existence/count is not[m
+[32m+[m[32m  inferable from sequential IDs), soft-deletion of clinical records (never[m
+[32m+[m[32m  destructive deletion), and row-versioning for AI-generated content[m
+[32m+[m[32m  (original and human-corrected versions both preserved, never overwritten).[m
+[32m+[m[32m- **File handling**: uploaded audio and generated PDFs are stored using[m
+[32m+[m[32m  randomly-generated filenames, never the original filename or any[m
+[32m+[m[32m  patient-identifying string, reducing the risk of PHI exposure through[m
+[32m+[m[32m  filesystem-level access independent of database access controls.[m
+[32m+[m[32m- **A dedicated security hardening review** was performed covering CORS[m
+[32m+[m[32m  configuration, cookie security, secrets management, input validation, and[m
+[32m+[m[32m  request size limits. This review found and corrected two real gaps: a[m
+[32m+[m[32m  missing global request-size limit on JSON endpoints, and a `.gitignore`[m
+[32m+[m[32m  omission that could have allowed PDF files containing real patient names and[m
+[32m+[m[32m  clinical data to be committed to version control (confirmed, via direct[m
+[32m+[m[32m  inspection of repository history, that this had not yet actually occurred[m
+[32m+[m[32m  before the fix was applied).[m
+[32m+[m
+[32m+[m[32m**What this system does not yet provide**, stated plainly: HTTPS/TLS[m
+[32m+[m[32mtermination (must be provided by infrastructure fronting this system in any[m
+[32m+[m[32mreal deployment); FIPS 140-2/3 compliance (would require replacing the current[m
+[32m+[m[32mpassword hashing algorithm if formally required); and an automated database[m
+[32m+[m[32mbackup strategy.[m
+[32m+[m
+[32m+[m[32m---[m
+[32m+[m
+[32m+[m[32m## 5. Known Limitations[m
+[32m+[m
+[32m+[m[32mThis system has real, current limitations. They are listed here directly[m
+[32m+[m[32mbecause an accurate account of what is not yet solved is more useful to a[m
+[32m+[m[32mtechnical reviewer than a document that omits them.[m
+[32m+[m
+[32m+[m[32m1. **No background task queue.** Several pipeline stages (chunking,[m
+[32m+[m[32m   transcription, entity extraction, AI-assisted drafting) are long-running[m
+[32m+[m[32m   synchronous operations — the text-generation step alone has been measured[m
+[32m+[m[32m   taking 80 to 258 seconds depending on the task. Under concurrent real-world[m
+[32m+[m[32m   load, this is the single most significant scalability constraint of the[m
+[32m+[m[32m   current system.[m
+[32m+[m[32m2. **Single backend process, by design.** The GPU resource management[m
+[32m+[m[32m   approach described in Section 2.3 requires this; scaling beyond one[m
+[32m+[m[32m   process would require a different GPU-sharing architecture.[m
+[32m+[m[32m3. **The speaker diarization library is running a different version than[m
+[32m+[m[32m   originally intended** (a newer release pulled in during development,[m
+[32m+[m[32m   rather than the specific version originally pinned to avoid a known[m
+[32m+[m[32m   resource-usage issue in GPU contexts). This has not caused an observed[m
+[32m+[m[32m   problem in the current CPU-only diarization configuration, but remains an[m
+[32m+[m[32m   open item to formally resolve.[m
+[32m+[m[32m4. **The AI-assisted nurse intake extraction path is implemented but has not[m
+[32m+[m[32m   been tested against a real two-recording clinical encounter** (one[m
+[32m+[m[32m   recording for vitals-taking, one for the doctor consultation) — only the[m
+[32m+[m[32m   manual-entry intake path has complete, real-world verification. This[m
+[32m+[m[32m   reflects the genuine sequencing of development, not a hidden gap.[m
+[32m+[m[32m5. **This system has been deployed and verified in one environment**[m
+[32m+[m[32m   (a local development machine running Docker with GPU passthrough). It has[m
+[32m+[m[32m   not yet been tested on a separate, independent server or cloud[m
+[32m+[m[32m   infrastructure. A first deployment to new infrastructure should be treated[m
+[32m+[m[32m   as a real validation exercise, not an assumed repeat of prior testing.[m
+[32m+[m
+[32m+[m[32m---[m
+[32m+[m
+[32m+[m[32m## 6. Development and Verification Approach[m
+[32m+[m
+[32m+[m[32mEvery model and library integrated into this system was independently[m
+[32m+[m[32mverified against real data before being considered complete — this included,[m
+[32m+[m[32min multiple cases, discovering that an initial assumption (a model's expected[m
+[32m+[m[32mbehavior, a library's version compatibility, an extraction prompt's[m
+[32m+[m[32mreliability) was wrong, and correcting the underlying design rather than[m
+[32m+[m[32mpatching around the symptom. Specific instances of this discipline, beyond the[m
+[32m+[m[32mvitals-extraction example in Section 3.1, include:[m
+[32m+[m
+[32m+[m[32m- A dependency conflict between the originally-planned clinical NER library[m
+[32m+[m[32m  and the rest of the system's dependencies was identified before it caused a[m
+[32m+[m[32m  production issue, leading to a considered switch to an alternative,[m
+[32m+[m[32m  actively-maintained NER model family with equivalent clinical coverage.[m
+[32m+[m[32m- A data-integrity bug causing duplicate transcript records to silently[m
+[32m+[m[32m  accumulate across repeated processing runs was traced to its root cause (a[m
+[32m+[m[32m  database foreign-key behavior interacting with a cleanup routine that didn't[m
+[32m+[m[32m  account for it) and fixed at the source, with existing corrupted data[m
+[32m+[m[32m  cleaned up as part of the same fix, rather than working around the symptom.[m
+[32m+[m[32m- Text-parsing logic for AI-generated clinical drafts was rebuilt after real[m
+[32m+[m[32m  test output revealed a failure mode (a common word inside a sentence being[m
+[32m+[m[32m  mistaken for a section heading) that a review of the code alone had not[m
+[32m+[m[32m  surfaced.[m
+[32m+[m
+[32m+[m[32mThis pattern — build, test against real data, find real problems, fix them at[m
+[32m+[m[32mthe root — was the consistent approach across the full 17-phase development[m
+[32m+[m[32mprocess, and is reflected in the project's own internal status documentation[m
+[32m+[m[32mmaintained throughout development.[m
+ [m
+ ## User's stated working style[m
+ - Wants terminal commands with exact path context (which folder)[m

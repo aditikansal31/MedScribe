@@ -53,13 +53,24 @@ class Settings(BaseSettings):
     AZURE_SPEECH_KEY: str = ""
     AZURE_SPEECH_REGION: str = ""
     
-        # ==== CORS (Phase 16 hardening) ====
+    # ==== Local PII masking middleware ====
+    # MedGemma must only receive tokenized prompts. If the privacy boundary
+    # cannot be reached, the draft request fails closed by default.
+    PII_MASKING_ENABLED: bool = True
+    PII_MASKING_REQUIRED: bool = True
+    # Port 8001 deliberately avoids MedScribe's FastAPI backend on 8000.
+    PII_MASKING_URL: str = "http://127.0.0.1:8001"
+    PII_MASKING_API_KEY: str = "dev-only-key"
+    PII_MASKING_TIMEOUT_SECONDS: float = 5.0
+
+    
+    # ==== CORS (Phase 16 hardening) ====
     # Comma-separated list, environment-driven -- was hardcoded to
     # localhost:5173 only since Phase 3. Dev default preserves existing
     # behavior; a real deployment sets this via .env to the actual
     # production frontend origin(s), never "*" for a system handling
     # patient data with credentialed (cookie-based) requests.
-    CORS_ALLOWED_ORIGINS: str = "http://localhost:5173"
+    CORS_ALLOWED_ORIGINS: str = "http://localhost"
     
     # ==== Cookie security (Phase 16 hardening) ====
     # False in dev (HTTP localhost), MUST be True in any real deployment
@@ -95,7 +106,7 @@ class Settings(BaseSettings):
         """Async connection string, used by the FastAPI app at runtime (asyncpg driver)."""
         return (
             f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
-            f"@localhost:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+            f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
 
     @property
@@ -103,12 +114,12 @@ class Settings(BaseSettings):
         """Sync connection string, used only by Alembic's migration runner."""
         return (
             f"postgresql+psycopg2://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
-            f"@localhost:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+            f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
 
     @property
     def REDIS_URL(self) -> str:
-        return f"redis://:{self.REDIS_PASSWORD}@localhost:{self.REDIS_PORT}/0"
+        return f"redis://:{self.REDIS_PASSWORD}"f"@{self.REDIS_HOST}:{self.REDIS_PORT}/0"
 
 
 @lru_cache
